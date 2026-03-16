@@ -57,7 +57,7 @@ nb_fraudeurs = st.sidebar.slider(
 # Slider detecteurs — limité aux coeurs physiques
 nb_detecteurs = st.sidebar.slider(
     "Nombre de detecteurs (processus paralleles)",
-    min_value=1, max_value=coeurs_physiques, value=min(3, coeurs_physiques)
+    min_value=1, max_value=multiprocessing.cpu_count(), value=min(4, multiprocessing.cpu_count())
 )
 
 # Slider rounds
