@@ -2,8 +2,7 @@ streamlit
 matplotlib
 pandas
 numpy
-xgboost
+# uniquement pour les scripts du dossier ml/
 scikit-learn
-imbalanced-learn
+xgboost
 joblib
-plotly

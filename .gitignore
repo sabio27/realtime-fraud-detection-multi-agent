@@ -1,0 +1,18 @@
+# Environnement Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Fichiers produits par la simulation (recréés automatiquement)
+data/*.db
+data/*.csv
+
+# Modèle XGBoost : se régénère avec python -m ml.modele_detection
+models/*.pkl
+
+# Éditeurs et système
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

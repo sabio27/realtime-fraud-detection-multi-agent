@@ -1,80 +1,64 @@
-# =============================================================================
-# app.py
-# Rôle : Interface visuelle de la simulation avec Streamlit.
-#        Affiche en temps réel les transactions, l'état des agents,
-#        les courbes d'apprentissage et le speedup parallèle.
-# =============================================================================
+"""Interface Streamlit de la simulation.
 
-import streamlit as st        # Framework web pour l'interface visuelle
-import matplotlib.pyplot as plt  # Pour tracer les graphiques et courbes
-import pandas as pd           # Pour afficher les tableaux de données
-from simulation import Simulation  # Moteur de simulation multi-agents
+On règle les paramètres dans la barre latérale, on lance, puis on suit
+le flux de transactions, l'état des agents, les courbes d'apprentissage
+et le speedup parallèle.
 
+    streamlit run app.py
+"""
 
-# Protection obligatoire sur Windows pour multiprocessing
-# Sans cette ligne, chaque processus fils recrée l'app Streamlit
-# → récursion infinie → crash
-if __name__ == "__main__":
-    pass  # Le code de l'interface Streamlit est en dehors de ce bloc pour s'exécuter normalement
+import json
+import multiprocessing
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
+
+from core.simulation import Simulation
 
 # --- Configuration de la page Streamlit --------------------------------------
-# layout="wide" utilise toute la largeur de l'écran
 st.set_page_config(page_title="Simulation Fraude Multi-Agents", layout="wide")
 
 st.title("Simulation de Detection de Fraude Multi-Agents Parallele")
 st.markdown("---")
 
-# =============================================================================
-# SIDEBAR — Panneau de controle
-# Permet à l'utilisateur de configurer la simulation avant de la lancer
-# =============================================================================
-# --- Panneau de controle (barre laterale gauche) ------------------------------
+# --- Barre latérale : paramètres ---------------------------------------------
 st.sidebar.header("Parametres de simulation")
 
-# Calcul du nombre de coeurs physiques disponibles
-# cpu_count() // 2 = coeurs physiques (hyperthreading exclu)
-import multiprocessing
-coeurs_physiques = multiprocessing.cpu_count() // 2
+# Un détecteur par cœur physique au maximum (hyperthreading exclu)
+coeurs_physiques = max(1, multiprocessing.cpu_count() // 2)
 
-# Affichage informatif des ressources disponibles
 st.sidebar.info(
     f"Coeurs physiques disponibles : {coeurs_physiques}\n\n"
     f"Maximum recommande pour les detecteurs : {coeurs_physiques}"
 )
 
-# Slider clients normaux
 nb_clients = st.sidebar.slider(
     "Nombre de clients normaux",
     min_value=5, max_value=1000, value=20
 )
 
-# Slider fraudeurs
 nb_fraudeurs = st.sidebar.slider(
     "Nombre de fraudeurs",
     min_value=1, max_value=500, value=5
 )
 
-# Slider detecteurs — limité aux coeurs physiques
 nb_detecteurs = st.sidebar.slider(
     "Nombre de detecteurs (processus paralleles)",
-    min_value=1, max_value=multiprocessing.cpu_count(), value=min(4, multiprocessing.cpu_count())
+    # Streamlit refuse un curseur dont le min et le max sont égaux
+    min_value=1, max_value=max(2, coeurs_physiques), value=min(4, coeurs_physiques)
 )
 
-# Slider rounds
 nb_rounds = st.sidebar.slider(
     "Nombre de rounds",
     min_value=5, max_value=30, value=15
 )
 
-# --- Validations et avertissements -------------------------------------------
-
-# Calcul de la charge par detecteur
+# --- Avertissements sur des réglages peu pertinents --------------------------
 charge_par_detecteur = (nb_clients + nb_fraudeurs) / nb_detecteurs
 
-# Calcul du ratio clients/fraudeurs
 ratio = nb_clients / nb_fraudeurs if nb_fraudeurs > 0 else 0
 
-# Verification 1 : charge minimale par detecteur
 if charge_par_detecteur < 5:
     st.sidebar.warning(
         f"Charge trop faible par detecteur "
@@ -82,21 +66,18 @@ if charge_par_detecteur < 5:
         f"Augmente les clients/fraudeurs ou reduis les detecteurs."
     )
 
-# Verification 2 : ratio clients/fraudeurs
 if ratio < 2:
     st.sidebar.warning(
         f"Ratio clients/fraudeurs trop faible ({ratio:.1f}). "
         f"Dans la realite bancaire, ce ratio est de 3 a 5 minimum."
     )
 
-# Verification 3 : nombre de rounds suffisant
 if nb_rounds < 10:
     st.sidebar.warning(
         "Moins de 10 rounds : l'apprentissage des agents "
         "ne sera pas bien visible sur les courbes."
     )
 
-# Affichage du resume des parametres valides
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Resume de la simulation :**")
 st.sidebar.markdown(
@@ -106,16 +87,11 @@ st.sidebar.markdown(
     f"- Memoire estimee : **~{nb_detecteurs * 50}MB**"
 )
 
-# Bouton de lancement
 lancer = st.sidebar.button("Lancer la simulation")
 
-# =============================================================================
-# ZONE PRINCIPALE — Affichage des résultats
-# S'affiche uniquement après avoir cliqué sur "Lancer la simulation"
-# =============================================================================
+# --- Zone principale, après le clic sur "Lancer" ----------------------------
 if lancer:
 
-    # --- Création de la simulation avec les paramètres choisis ---------------
     sim = Simulation(
         nb_clients    = nb_clients,
         nb_fraudeurs  = nb_fraudeurs,
@@ -123,40 +99,18 @@ if lancer:
         nb_rounds     = nb_rounds
     )
 
-    # --- Barre de progression et stockage des métriques par round ------------
     st.subheader("Simulation en cours...")
 
-    # Barre de progression visuelle (0% → 100% au fil des rounds)
     barre = st.progress(0)
 
-    # Texte dynamique indiquant le round en cours
     statut = st.empty()
 
-    # Liste pour stocker les métriques de chaque round
-    # Remplie par le callback appelé à chaque round
-    historique_rounds = []
-
-    historique_transactions  = []  # Stocke les transactions de chaque round
+    historique_rounds = []        # métriques de chaque round
+    historique_transactions = []  # transactions de chaque round, pour l'animation
 
     def callback_round(metriques):
-        """
-        Fonction appelée automatiquement à chaque round par simulation.py.
-        Met à jour la barre de progression et stocke les métriques.
-
-        :param metriques: Dictionnaire des métriques du round terminé
-        """
-
-        # Ajoute les métriques du round à l'historique local
+        """Appelée par la simulation à la fin de chaque round."""
         historique_rounds.append(metriques)
-
-        # Calcule la progression en pourcentage (0.0 à 1.0)
-        #progression = len(historique_rounds) / nb_rounds
-
-        # Met à jour la barre de progression
-        #barre.progress(progression)
-
-        # Met à jour le texte de statut
-        # Stocke les transactions du round pour l'animation D3.js
 
         transactions_round = [
             {
@@ -183,21 +137,15 @@ if lancer:
         )
 
 
-    # --- Lancement de la simulation complète ---------------------------------
-    # La simulation appelle callback_round() à chaque round terminé
     bilan = sim.lancer(callback=callback_round)
 
-    # Message de fin une fois tous les rounds terminés
     statut.text("Simulation terminee !")
     st.success("Simulation terminee avec succes !")
     st.markdown("---")
 
-    # =========================================================================
-    # SECTION 1 — Metriques globales (chiffres clés en haut de page)
-    # =========================================================================
+    # --- Bilan global ---------------------------------------------------------
     st.subheader("Bilan global de la simulation")
 
-    # Affichage en 5 colonnes pour les métriques principales
     c1, c2, c3, c4, c5 = st.columns(5)
 
     c1.metric(
@@ -223,11 +171,6 @@ if lancer:
 
     st.markdown("---")
 
-    # =========================================================================
-    # ONGLETS — Organisation visuelle
-    # =========================================================================
-    import time
-
     tab1, tab2, tab3, tab4 = st.tabs([
         " Flux en temps réel",
         " Etat des agents",
@@ -235,11 +178,9 @@ if lancer:
         " Strategies des fraudeurs"
     ])
 
-    # ── ONGLET 1 : Flux en temps réel ────────────────────────────────────
+    # --- Onglet 1 : animation du flux de transactions ---------------------
     with tab1:
         st.subheader("Animation — Flux de transactions")
-        import json
-
         donnees_animation = json.dumps({
             "rounds"       : historique_transactions,
             "nb_detecteurs": nb_detecteurs,
@@ -880,7 +821,7 @@ if lancer:
 
         st.components.v1.html(html_animation, height=600, scrolling=False)
 
-    # ── ONGLET 2 : Etat des agents ────────────────────────────────────────
+    # --- Onglet 2 : état des agents ----------------------------------------
     with tab2:
         st.subheader("Etat des agents")
         col_f, col_d = st.columns(2)
@@ -919,7 +860,7 @@ if lancer:
             st.dataframe(pd.DataFrame(donnees_detecteurs),
                         use_container_width=True)
 
-    # ── ONGLET 3 : Courbes et graphiques ──────────────────────────────────
+    # --- Onglet 3 : courbes ------------------------------------------------
     with tab3:
         st.subheader("Courbes et graphiques")
 
@@ -977,12 +918,10 @@ if lancer:
             ax3.set_xlabel("Round")
             ax3.set_ylabel("Taux de reussite")
             ax3.set_title("Apprentissage des fraudeurs par round")
-            #ax3.legend(fontsize=7)
             ax3.grid(True, alpha=0.3)
             ax3.set_ylim(0, 1)
 
-            # Legende uniquement si peu de fraudeurs
-            # Au-dela de 10, elle deborde sur le graphique
+            # Au-delà de 10 fraudeurs, la légende déborde sur le graphique
             if nb_fraudeurs <= 10:
                 ax3.legend(fontsize=7)
             else:
@@ -1014,7 +953,7 @@ if lancer:
             ax4.set_ylim(0, 1)
             st.pyplot(fig4)
 
-    # ── ONGLET 4 : Strategies des fraudeurs ───────────────────────────────
+    # --- Onglet 4 : stratégies des fraudeurs et speedup --------------------
     with tab4:
         st.subheader("Strategies des fraudeurs")
         g5, g6 = st.columns(2)
@@ -1034,7 +973,6 @@ if lancer:
             ax5.set_xlabel("Strategie")
             ax5.set_ylabel("Score Q (apprentissage)")
             ax5.set_title("Scores Q finaux par strategie")
-            # Legende uniquement si peu de fraudeurs
             if nb_fraudeurs <= 10:
                 ax5.legend(fontsize=7)
             else:
@@ -1051,8 +989,8 @@ if lancer:
 
         with g6:
             fig6, ax6 = plt.subplots(figsize=(6, 5))
-            labels  = ["Sequentiel\n(1 thread)",
-                      f"Parallele\n({nb_detecteurs} threads)"]
+            labels  = ["Sequentiel\n(1 processus)",
+                      f"Parallele\n({nb_detecteurs} processus)"]
             valeurs = [bilan["temps_sequentiel"], bilan["temps_parallele"]]
             couleurs = ["red", "green"]
             barres = ax6.bar(labels, valeurs, color=couleurs, alpha=0.8)
